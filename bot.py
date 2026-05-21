@@ -93,7 +93,7 @@ async def save_to_notion(agent_id: str, question: str, answer: str) -> bool:
     date_str = now.strftime("%Y.%m.%d %H:%M")
     agent_name = AGENTS.get(agent_id, {}).get("name", "에이전트")
     title = f"{agent_name} — {date_str}"
-    parent_id = NOTION_PAGE_ID
+    parent_id = NOTION_AGENT_PAGES.get(agent_id, NOTION_PAGE_ID)
 
     # 노션 페이지 생성
     url = "https://api.notion.com/v1/pages"
