@@ -76,7 +76,7 @@ async def call_agent(agent_id, question, history, context=""):
         system += f"\n\n[이전 에이전트 컨텍스트]\n{context}"
     messages = history[-6:] + [{"role": "user", "content": question}]
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5",
         max_tokens=2000,
         system=system,
         messages=messages
@@ -86,7 +86,7 @@ async def call_agent(agent_id, question, history, context=""):
 async def orchestrate(question):
     import json
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-5",
         max_tokens=200,
         system=ORCHESTRATOR_PROMPT,
         messages=[{"role": "user", "content": question}]
