@@ -18,14 +18,14 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "")
-NOTION_PAGE_ID = "36705f2f16b0817b84c0da25385f5b64"  # MCP HUB 페이지
+NOTION_PAGE_ID = "36705f2f-16b0-817b-84c0-da25385f5b64"  # MCP HUB 페이지
 
 # 에이전트별 노션 하위 페이지 ID
 NOTION_AGENT_PAGES = {
-    "strategy": "36705f2f16b081399f5fe376a882d49e",
-    "sales": "36705f2f16b08159a3d5f7f35e2ede42",
-    "crm": "36705f2f16b081689c9ed98f9993c78a",
-    "auto": "36705f2f16b0817b84c0da25385f5b64"
+    "strategy": "36705f2f-16b0-8139-9f5f-e376a882d49e",
+    "sales": "36705f2f-16b0-8159-a3d5-f7f35e2ede42",
+    "crm": "36705f2f-16b0-8168-9c9e-d98f9993c78a",
+    "auto": "36705f2f-16b0-817b-84c0-da25385f5b64"
 }
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
