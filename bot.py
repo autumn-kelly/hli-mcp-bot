@@ -1,10 +1,12 @@
 """
-JURA/CASO MCP 멀티에이전트 텔레그램 봇
+JURA/CASO MCP 멀티에이전트 텔레그램 봇 (노션 저장 기능 포함)
 """
 
 import os
-import asyncio
 import logging
+import json
+import httpx
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -15,6 +17,16 @@ import anthropic
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
+NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "")
+NOTION_PAGE_ID = "36705f2f16b0817b84c0da25385f5b64"  # MCP HUB 페이지
+
+# 에이전트별 노션 하위 페이지 ID
+NOTION_AGENT_PAGES = {
+    "strategy": "36705f2f16b081399f5fe376a882d49e",
+    "sales": "36705f2f16b08159a3d5f7f35e2ede42",
+    "crm": "36705f2f16b081689c9ed98f9993c78a",
+    "auto": "36705f2f16b0817b84c0da25385f5b64"
+}
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 logging.basicConfig(level=logging.INFO)
@@ -65,9 +77,87 @@ def get_session(user_id):
     if user_id not in user_sessions:
         user_sessions[user_id] = {
             "mode": "auto",
-            "history": {a: [] for a in AGENTS}
+            "history": {a: [] for a in AGENTS},
+            "last_question": "",
+            "last_answer": "",
+            "last_agent": "auto"
         }
     return user_sessions[user_id]
+
+# ── 노션 저장 함수 ──────────────────────────────────
+async def save_to_notion(agent_id: str, question: str, answer: str) -> bool:
+    if not NOTION_TOKEN:
+        return False
+
+    now = datetime.now()
+    date_str = now.strftime("%Y.%m.%d %H:%M")
+    agent_name = AGENTS.get(agent_id, {}).get("name", "에이전트")
+    title = f"{agent_name} — {date_str}"
+    parent_id = NOTION_AGENT_PAGES.get(agent_id, NOTION_PAGE_ID)
+
+    # 노션 페이지 생성
+    url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+
+    # 답변을 2000자 단위로 분할 (노션 블록 제한)
+    def split_text(text, max_len=1800):
+        return [text[i:i+max_len] for i in range(0, len(text), max_len)]
+
+    answer_blocks = []
+    for chunk in split_text(answer):
+        answer_blocks.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"type": "text", "text": {"content": chunk}}]
+            }
+        })
+
+    payload = {
+        "parent": {"page_id": parent_id},
+        "properties": {
+            "title": {
+                "title": [{"type": "text", "text": {"content": title}}]
+            }
+        },
+        "children": [
+            {
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {
+                    "rich_text": [{"type": "text", "text": {"content": "질문"}}]
+                }
+            },
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": question}}]
+                }
+            },
+            {
+                "object": "block",
+                "type": "divider",
+                "divider": {}
+            },
+            {
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {
+                    "rich_text": [{"type": "text", "text": {"content": "답변"}}]
+                }
+            },
+            *answer_blocks
+        ]
+    }
+
+    async with httpx.AsyncClient() as client_http:
+        response = await client_http.post(url, headers=headers, json=payload, timeout=30)
+        return response.status_code == 200
 
 async def call_agent(agent_id, question, history, context=""):
     agent = AGENTS[agent_id]
@@ -84,7 +174,6 @@ async def call_agent(agent_id, question, history, context=""):
     return response.content[0].text
 
 async def orchestrate(question):
-    import json
     response = client.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=200,
@@ -122,6 +211,10 @@ async def run_multi_agent(question, session, status_callback):
             session["history"][agent_id] = session["history"][agent_id][-20:]
         results.append({"agent": agent_id, "name": agent["name"], "answer": answer})
 
+    # 마지막 에이전트 저장 (노션 저장 시 사용)
+    if results:
+        session["last_agent"] = results[-1]["agent"]
+
     if len(results) == 1:
         return f"{results[0]['name']}\n\n{results[0]['answer']}"
     else:
@@ -130,6 +223,7 @@ async def run_multi_agent(question, session, status_callback):
             combined += f"{'─'*28}\n{r['name']}\n{'─'*28}\n{r['answer']}\n\n"
         return combined.strip()
 
+# ── 텔레그램 핸들러 ──────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
@@ -142,7 +236,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🤖 자동 라우팅", callback_data="mode_auto")]
     ]
     await update.message.reply_text(
-        "🏢 MCP HUB — S&M 본부 에이전트\n\n에이전트를 선택하거나 자동 라우팅으로 질문하세요.\n\n현재 모드: 🤖 자동 라우팅",
+        "🏢 MCP HUB — S&M 본부 에이전트\n\n"
+        "에이전트를 선택하거나 자동 라우팅으로 질문하세요.\n\n"
+        "현재 모드: 🤖 자동 라우팅\n\n"
+        "💡 답변 후 /save 입력하면 노션에 자동 저장됩니다.",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -185,9 +282,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             answer = await call_agent(mode, question, session["history"][mode])
             session["history"][mode].append({"role": "user", "content": question})
             session["history"][mode].append({"role": "assistant", "content": answer})
+            session["last_agent"] = mode
             answer = f"{AGENTS[mode]['name']}\n\n{answer}"
 
+        # 마지막 대화 저장
+        session["last_question"] = question
+        session["last_answer"] = answer
+
         await status_msg.delete()
+
         if len(answer) <= 4096:
             await update.message.reply_text(answer)
         else:
@@ -195,9 +298,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i, chunk in enumerate(chunks):
                 prefix = f"[{i+1}/{len(chunks)}]\n" if len(chunks) > 1 else ""
                 await update.message.reply_text(prefix + chunk)
+
+        # 저장 안내
+        await update.message.reply_text("📎 노션에 저장하려면 /save 를 입력하세요.")
+
     except Exception as e:
         await status_msg.edit_text(f"오류가 발생했습니다: {str(e)}")
         logger.error(f"Error: {e}", exc_info=True)
+
+async def save_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    session = get_session(user_id)
+
+    if not session.get("last_question"):
+        await update.message.reply_text("저장할 대화 내용이 없습니다. 먼저 질문해 주세요.")
+        return
+
+    msg = await update.message.reply_text("📎 노션에 저장 중...")
+    try:
+        success = await save_to_notion(
+            session["last_agent"],
+            session["last_question"],
+            session["last_answer"]
+        )
+        if success:
+            await msg.edit_text("✅ 노션에 저장됐습니다!")
+        else:
+            await msg.edit_text("⚠️ 저장에 실패했습니다. NOTION_TOKEN을 확인해 주세요.")
+    except Exception as e:
+        await msg.edit_text(f"⚠️ 저장 오류: {str(e)}")
+        logger.error(f"Notion save error: {e}", exc_info=True)
 
 async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = get_session(update.effective_user.id)
@@ -212,6 +342,8 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in user_sessions:
         user_sessions[user_id]["history"] = {a: [] for a in AGENTS}
+        user_sessions[user_id]["last_question"] = ""
+        user_sessions[user_id]["last_answer"] = ""
     await update.message.reply_text("대화 히스토리가 초기화됐습니다.")
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -224,12 +356,14 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"대화 히스토리:\n"
         f"  ⚡ 전략: {counts['strategy']}턴\n"
         f"  📋 영업기획: {counts['sales']}턴\n"
-        f"  👥 CRM: {counts['crm']}턴"
+        f"  👥 CRM: {counts['crm']}턴\n\n"
+        f"노션 연동: {'✅ 활성' if NOTION_TOKEN else '❌ 미설정'}"
     )
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("save", save_command))
     app.add_handler(CommandHandler("strategy", mode_command))
     app.add_handler(CommandHandler("sales", mode_command))
     app.add_handler(CommandHandler("crm", mode_command))
