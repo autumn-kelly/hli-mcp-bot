@@ -1,5 +1,5 @@
 """
-JURA/CASO MCP 멀티에이전트 텔레그램 봇 (노션 저장 기능 포함)
+JURA/CASO MCP 멀티에이전트 텔레그램 봇 (노션 저장 + 마케팅 에이전트 포함)
 """
 
 import os
@@ -18,14 +18,14 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ALLOWED_USER_ID = int(os.environ.get("ALLOWED_USER_ID", "0"))
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN", "")
-NOTION_PAGE_ID = "36705f2f-16b0-817b-84c0-da25385f5b64"  # MCP HUB 페이지
 
-# 에이전트별 노션 하위 페이지 ID
-NOTION_AGENT_PAGES = {
-    "strategy": "36705f2f-16b0-8139-9f5f-e376a882d49e",
-    "sales": "36705f2f-16b0-8159-a3d5-f7f35e2ede42",
-    "crm": "36705f2f-16b0-8168-9c9e-d98f9993c78a",
-    "auto": "36705f2f-16b0-817b-84c0-da25385f5b64"
+# 노션 페이지 ID (MCP HUB 하위 페이지들 - 새로 생성)
+NOTION_PAGES = {
+    "strategy": "36705f2f-16b0-81c7-a093-e5f0c8de7b0f",
+    "sales":    "36705f2f-16b0-8160-9f8c-d0c5367f4cab",
+    "crm":      "36705f2f-16b0-8172-bbf4-f864435dba94",
+    "marketing":"36705f2f-16b0-818c-a81c-c17b7ef3080e",
+    "auto":     "36705f2f-16b0-817b-84c0-da25385f5b64"
 }
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -34,27 +34,31 @@ logger = logging.getLogger(__name__)
 
 AGENTS = {
     "strategy": {
-        "name": "⚡ 전략 에이전트",
-        "emoji": "⚡",
+        "name": "⚡ 전략 에이전트", "emoji": "⚡",
         "prompt": """당신은 JURA(스위스 프리미엄 전자동 커피머신)와 CASO DESIGN(혁신 주방가전) 전문 전략 에이전트입니다.
 역할: 시장 인텔리전스, 브랜드 포지셔닝, CEO 보고용 전략 인사이트, 팀간 전략 방향 정의
 JURA: 고관여·고가격·감성소구 / CASO: 혁신·디자인·라이프스타일 / 공통: 프리미엄 포지셔닝 유지
-응답은 간결하고 실행 가능한 인사이트 중심으로 작성. 마지막에 영업기획팀·CRM팀·마케팅팀 액션 아이템 각 1-2개씩 제시."""
+응답 마지막에 영업기획팀·CRM팀·마케팅팀 액션 아이템 각 1-2개씩 제시."""
     },
     "sales": {
-        "name": "📋 영업기획 에이전트",
-        "emoji": "📋",
+        "name": "📋 영업기획 에이전트", "emoji": "📋",
         "prompt": """당신은 JURA(100만~500만원대)와 CASO DESIGN(20만~80만원대) 전문 영업기획 에이전트입니다.
 역할: 채널별 판매목표 수립, 판촉 기획, 영업 프로세스 표준화, 팀간 연계
 원칙: 프리미엄 포지셔닝 유지, 가치 기반 판매
-응답은 구체적 실행 계획과 KPI 중심으로 작성. 마지막에 마케팅팀 요청 사항과 CRM팀 필요 데이터 제시."""
+응답 마지막에 마케팅팀 요청 사항과 CRM팀 필요 데이터 제시."""
     },
     "crm": {
-        "name": "👥 CRM 에이전트",
-        "emoji": "👥",
+        "name": "👥 CRM 에이전트", "emoji": "👥",
         "prompt": """당신은 JURA(소모품/AS/업그레이드 사이클)와 CASO DESIGN(크로스셀/라이프스타일) 전문 CRM 에이전트입니다.
 역할: 고객 세그먼테이션, LTV 분석, 리텐션 캠페인 설계, 팀간 고객 데이터 공유
-응답은 고객 세그먼트별 구체적 액션과 캠페인 시나리오 중심으로 작성. 마지막에 마케팅팀 캠페인 요청 제시."""
+응답 마지막에 마케팅팀 캠페인 요청 제시."""
+    },
+    "marketing": {
+        "name": "📣 마케팅 에이전트", "emoji": "📣",
+        "prompt": """당신은 JURA(스위스 프리미엄 전자동 커피머신)와 CASO DESIGN(혁신 주방가전) 전문 마케팅 에이전트입니다.
+역할: 콘텐츠 기획, 캠페인 설계, SNS/디지털 마케팅 전략, 브랜드 커뮤니케이션
+JURA: 프리미엄 감성·체험 중심 / CASO: 라이프스타일·혁신 소구
+응답 마지막에 영업기획팀·CRM팀 연계 액션 제시."""
     }
 }
 
@@ -65,6 +69,7 @@ ORCHESTRATOR_PROMPT = """당신은 JURA/CASO DESIGN 세일즈&마케팅 본부�
 - strategy: 시장분석, 경쟁사, 브랜드 전략, CEO 보고, 채널 전략
 - sales: 판촉 기획, 영업 목표, 프로모션, B2B 영업, 채널 관리
 - crm: 고객 세그먼트, LTV, 리텐션, 캠페인, 소모품/업그레이드 사이클
+- marketing: 콘텐츠 기획, SNS, 광고, 브랜드 커뮤니케이션, 영상 기획
 
 다음 JSON 형식으로만 응답하세요:
 {"agents": ["agent_id1"], "multi_flow": false}
@@ -84,7 +89,6 @@ def get_session(user_id):
         }
     return user_sessions[user_id]
 
-# ── 노션 저장 함수 ──────────────────────────────────
 async def save_to_notion(agent_id: str, question: str, answer: str) -> bool:
     if not NOTION_TOKEN:
         return False
@@ -93,71 +97,43 @@ async def save_to_notion(agent_id: str, question: str, answer: str) -> bool:
     date_str = now.strftime("%Y.%m.%d %H:%M")
     agent_name = AGENTS.get(agent_id, {}).get("name", "에이전트")
     title = f"{agent_name} — {date_str}"
-    parent_id = NOTION_AGENT_PAGES.get(agent_id, NOTION_PAGE_ID)
+    parent_id = NOTION_PAGES.get(agent_id, NOTION_PAGES["auto"])
 
-    # 노션 페이지 생성
-    url = "https://api.notion.com/v1/pages"
-    headers = {
-        "Authorization": f"Bearer {NOTION_TOKEN}",
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
-    }
-
-    # 답변을 2000자 단위로 분할 (노션 블록 제한)
     def split_text(text, max_len=1800):
         return [text[i:i+max_len] for i in range(0, len(text), max_len)]
 
     answer_blocks = []
     for chunk in split_text(answer):
         answer_blocks.append({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {
-                "rich_text": [{"type": "text", "text": {"content": chunk}}]
-            }
+            "object": "block", "type": "paragraph",
+            "paragraph": {"rich_text": [{"type": "text", "text": {"content": chunk}}]}
         })
 
     payload = {
         "parent": {"page_id": parent_id},
-        "properties": {
-            "title": {
-                "title": [{"type": "text", "text": {"content": title}}]
-            }
-        },
+        "properties": {"title": {"title": [{"type": "text", "text": {"content": title}}]}},
         "children": [
-            {
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {
-                    "rich_text": [{"type": "text", "text": {"content": "질문"}}]
-                }
-            },
-            {
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"type": "text", "text": {"content": question}}]
-                }
-            },
-            {
-                "object": "block",
-                "type": "divider",
-                "divider": {}
-            },
-            {
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {
-                    "rich_text": [{"type": "text", "text": {"content": "답변"}}]
-                }
-            },
+            {"object": "block", "type": "heading_2",
+             "heading_2": {"rich_text": [{"type": "text", "text": {"content": "질문"}}]}},
+            {"object": "block", "type": "paragraph",
+             "paragraph": {"rich_text": [{"type": "text", "text": {"content": question}}]}},
+            {"object": "block", "type": "divider", "divider": {}},
+            {"object": "block", "type": "heading_2",
+             "heading_2": {"rich_text": [{"type": "text", "text": {"content": "답변"}}]}},
             *answer_blocks
         ]
     }
 
-    async with httpx.AsyncClient() as client_http:
-        response = await client_http.post(url, headers=headers, json=payload, timeout=30)
-        return response.status_code == 200
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+
+    async with httpx.AsyncClient() as c:
+        r = await c.post("https://api.notion.com/v1/pages", headers=headers, json=payload, timeout=30)
+        logger.info(f"Notion save: {r.status_code} - {r.text[:200]}")
+        return r.status_code == 200
 
 async def call_agent(agent_id, question, history, context=""):
     agent = AGENTS[agent_id]
@@ -211,7 +187,6 @@ async def run_multi_agent(question, session, status_callback):
             session["history"][agent_id] = session["history"][agent_id][-20:]
         results.append({"agent": agent_id, "name": agent["name"], "answer": answer})
 
-    # 마지막 에이전트 저장 (노션 저장 시 사용)
     if results:
         session["last_agent"] = results[-1]["agent"]
 
@@ -223,7 +198,6 @@ async def run_multi_agent(question, session, status_callback):
             combined += f"{'─'*28}\n{r['name']}\n{'─'*28}\n{r['answer']}\n\n"
         return combined.strip()
 
-# ── 텔레그램 핸들러 ──────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if ALLOWED_USER_ID and user_id != ALLOWED_USER_ID:
@@ -231,8 +205,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     keyboard = [
         [InlineKeyboardButton("⚡ 전략", callback_data="mode_strategy"),
-         InlineKeyboardButton("📋 영업기획", callback_data="mode_sales"),
-         InlineKeyboardButton("👥 CRM", callback_data="mode_crm")],
+         InlineKeyboardButton("📋 영업기획", callback_data="mode_sales")],
+        [InlineKeyboardButton("👥 CRM", callback_data="mode_crm"),
+         InlineKeyboardButton("📣 마케팅", callback_data="mode_marketing")],
         [InlineKeyboardButton("🤖 자동 라우팅", callback_data="mode_auto")]
     ]
     await update.message.reply_text(
@@ -251,7 +226,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "mode_auto": ("auto", "🤖 자동 라우팅"),
         "mode_strategy": ("strategy", "⚡ 전략 에이전트"),
         "mode_sales": ("sales", "📋 영업기획 에이전트"),
-        "mode_crm": ("crm", "👥 CRM 에이전트")
+        "mode_crm": ("crm", "👥 CRM 에이전트"),
+        "mode_marketing": ("marketing", "📣 마케팅 에이전트")
     }
     if query.data in mode_map:
         mode, name = mode_map[query.data]
@@ -285,7 +261,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session["last_agent"] = mode
             answer = f"{AGENTS[mode]['name']}\n\n{answer}"
 
-        # 마지막 대화 저장
         session["last_question"] = question
         session["last_answer"] = answer
 
@@ -299,7 +274,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 prefix = f"[{i+1}/{len(chunks)}]\n" if len(chunks) > 1 else ""
                 await update.message.reply_text(prefix + chunk)
 
-        # 저장 안내
         await update.message.reply_text("📎 노션에 저장하려면 /save 를 입력하세요.")
 
     except Exception as e:
@@ -322,9 +296,10 @@ async def save_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             session["last_answer"]
         )
         if success:
-            await msg.edit_text("✅ 노션에 저장됐습니다!")
+            agent_name = AGENTS.get(session["last_agent"], {}).get("name", "에이전트")
+            await msg.edit_text(f"✅ {agent_name} 로그에 저장됐습니다!")
         else:
-            await msg.edit_text("⚠️ 저장에 실패했습니다. NOTION_TOKEN을 확인해 주세요.")
+            await msg.edit_text("⚠️ 저장에 실패했습니다.")
     except Exception as e:
         await msg.edit_text(f"⚠️ 저장 오류: {str(e)}")
         logger.error(f"Notion save error: {e}", exc_info=True)
@@ -332,8 +307,8 @@ async def save_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = get_session(update.effective_user.id)
     cmd = update.message.text.split()[0][1:]
-    cmd_map = {"strategy": "strategy", "sales": "sales", "crm": "crm", "auto": "auto"}
-    names = {"strategy": "⚡ 전략", "sales": "📋 영업기획", "crm": "👥 CRM", "auto": "🤖 자동"}
+    cmd_map = {"strategy": "strategy", "sales": "sales", "crm": "crm", "marketing": "marketing", "auto": "auto"}
+    names = {"strategy": "⚡ 전략", "sales": "📋 영업기획", "crm": "👥 CRM", "marketing": "📣 마케팅", "auto": "🤖 자동"}
     if cmd in cmd_map:
         session["mode"] = cmd_map[cmd]
         await update.message.reply_text(f"{names[cmd]} 모드로 전환됐습니다.")
@@ -349,14 +324,15 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = get_session(update.effective_user.id)
     mode = session.get("mode", "auto")
-    names = {"auto": "🤖 자동", "strategy": "⚡ 전략", "sales": "📋 영업기획", "crm": "👥 CRM"}
+    names = {"auto": "🤖 자동", "strategy": "⚡ 전략", "sales": "📋 영업기획", "crm": "👥 CRM", "marketing": "📣 마케팅"}
     counts = {k: len(v)//2 for k, v in session["history"].items()}
     await update.message.reply_text(
         f"현재 모드: {names.get(mode, mode)}\n\n"
         f"대화 히스토리:\n"
         f"  ⚡ 전략: {counts['strategy']}턴\n"
         f"  📋 영업기획: {counts['sales']}턴\n"
-        f"  👥 CRM: {counts['crm']}턴\n\n"
+        f"  👥 CRM: {counts['crm']}턴\n"
+        f"  📣 마케팅: {counts['marketing']}턴\n\n"
         f"노션 연동: {'✅ 활성' if NOTION_TOKEN else '❌ 미설정'}"
     )
 
@@ -367,6 +343,7 @@ def main():
     app.add_handler(CommandHandler("strategy", mode_command))
     app.add_handler(CommandHandler("sales", mode_command))
     app.add_handler(CommandHandler("crm", mode_command))
+    app.add_handler(CommandHandler("marketing", mode_command))
     app.add_handler(CommandHandler("auto", mode_command))
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(CommandHandler("status", status_command))
