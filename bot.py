@@ -251,10 +251,15 @@ ORCHESTRATOR_PROMPT = """당신은 JURA/CASO DESIGN 세일즈&마케팅 본부�
 - crm: 고객 세그먼트, LTV, 리텐션, 캠페인, 소모품/업그레이드 사이클
 - marketing: 콘텐츠 기획, SNS, 광고, 브랜드 커뮤니케이션, 영상 기획
 
-다음 JSON 형식으로만 응답하세요:
-{"agents": ["agent_id1"], "multi_flow": false}
+이어서/계속/추가 요청 감지:
+- "이어서", "계속", "추가로", "더", "나머지" 등의 표현이 있으면
+  직전과 동일한 에이전트를 유지하고 continue_context: true 설정
 
-복합 질문은 여러 에이전트, multi_flow: true 설정."""
+다음 JSON 형식으로만 응답하세요:
+{"agents": ["agent_id1"], "multi_flow": false, "continue_context": false}
+
+복합 질문은 여러 에이전트, multi_flow: true 설정.
+이어서 요청은 continue_context: true 설정."""
 
 user_sessions = {}
 
@@ -315,15 +320,32 @@ async def save_to_notion(agent_id: str, question: str, answer: str) -> bool:
         logger.info(f"Notion save: {r.status_code} - {r.text[:200]}")
         return r.status_code == 200
 
-async def call_agent(agent_id, question, history, context=""):
+async def call_agent(agent_id, question, history, context="", continue_mode=False):
     agent = AGENTS[agent_id]
     system = agent["prompt"]
     if context:
         system += f"\n\n[이전 에이전트 컨텍스트]\n{context}"
-    messages = history[-6:] + [{"role": "user", "content": question}]
+
+    # 이어쓰기 모드: 직전 답변을 명확히 이어받도록 지시
+    if continue_mode and history:
+        last_answer = ""
+        for msg in reversed(history):
+            if msg["role"] == "assistant":
+                last_answer = msg["content"][-500:] if len(msg["content"]) > 500 else msg["content"]
+                break
+        if last_answer:
+            system += f"""
+
+[이어쓰기 지시]
+직전 답변이 중간에 잘렸습니다. 아래 내용에서 정확히 이어서 작성하세요.
+새로운 주제나 처음부터 다시 시작하지 마세요.
+직전 답변 끝부분:
+...{last_answer}"""
+
+    messages = history[-10:] + [{"role": "user", "content": question}]
     response = client.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=2000,
+        max_tokens=6000,
         system=system,
         messages=messages
     )
@@ -350,6 +372,12 @@ async def run_multi_agent(question, session, status_callback):
     routing = await orchestrate(question)
     agents_to_run = routing.get("agents", ["strategy"])
     multi_flow = routing.get("multi_flow", False)
+    continue_ctx = routing.get("continue_context", False)
+
+    # 이어쓰기 요청이면 직전 에이전트 유지
+    if continue_ctx and session.get("last_agent") and session["last_agent"] in AGENTS:
+        agents_to_run = [session["last_agent"]]
+
     results = []
     context = ""
 
@@ -360,11 +388,11 @@ async def run_multi_agent(question, session, status_callback):
         await status_callback(f"{agent['emoji']} {agent['name']} 분석 중...")
         if multi_flow and i > 0 and results:
             context = f"앞선 에이전트 분석:\n{results[-1]['answer'][:600]}"
-        answer = await call_agent(agent_id, question, session["history"][agent_id], context)
+        answer = await call_agent(agent_id, question, session["history"][agent_id], context, continue_mode=continue_ctx)
         session["history"][agent_id].append({"role": "user", "content": question})
         session["history"][agent_id].append({"role": "assistant", "content": answer})
-        if len(session["history"][agent_id]) > 20:
-            session["history"][agent_id] = session["history"][agent_id][-20:]
+        if len(session["history"][agent_id]) > 40:
+            session["history"][agent_id] = session["history"][agent_id][-40:]
         results.append({"agent": agent_id, "name": agent["name"], "answer": answer})
 
     if results:
@@ -454,7 +482,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 prefix = f"[{i+1}/{len(chunks)}]\n" if len(chunks) > 1 else ""
                 await update.message.reply_text(prefix + chunk)
 
-        await update.message.reply_text("📎 노션에 저장하려면 /save 를 입력하세요.")
+        # 답변 길이 체크 - 잘렸을 가능성 안내
+        if len(answer) >= 3800:
+            await update.message.reply_text(
+                "📎 노션에 저장하려면 /save\n"
+                "▶️ 내용이 잘렸다면 '이어서 계속해줘' 입력"
+            )
+        else:
+            await update.message.reply_text("📎 노션에 저장하려면 /save 를 입력하세요.")
 
     except Exception as e:
         await status_msg.edit_text(f"오류가 발생했습니다: {str(e)}")
